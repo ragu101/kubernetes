@@ -25,6 +25,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	grpccodes "google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -42,121 +44,103 @@ import (
 )
 
 func TestWatch(t *testing.T) {
-	ctx, store, _ := testSetup(t)
-	storagetesting.RunTestWatch(ctx, t, store)
-}
+	t.Run("Watch", func(t *testing.T) {
+		ctx, store, _ := testSetup(t)
+		storagetesting.RunTestWatch(ctx, t, store)
+	})
+	t.Run("ClusterScopedWatch", func(t *testing.T) {
+		ctx, store, _ := testSetup(t)
+		storagetesting.RunTestClusterScopedWatch(ctx, t, store)
+	})
+	t.Run("NamespaceScopedWatch", func(t *testing.T) {
+		ctx, store, _ := testSetup(t)
+		storagetesting.RunTestNamespaceScopedWatch(ctx, t, store)
+	})
+	t.Run("DeleteTriggerWatch", func(t *testing.T) {
+		ctx, store, _ := testSetup(t)
+		storagetesting.RunTestDeleteTriggerWatch(ctx, t, store)
+	})
+	t.Run("WatchFromZero", func(t *testing.T) {
+		ctx, store, client := testSetup(t)
+		storagetesting.RunTestWatchFromZero(ctx, t, store, compactStorage(store, client.Client))
+	})
+	t.Run("WatchFromNonZero", func(t *testing.T) {
+		ctx, store, _ := testSetup(t)
+		storagetesting.RunTestWatchFromNonZero(ctx, t, store)
+	})
+	t.Run("DelayedWatchDelivery", func(t *testing.T) {
+		ctx, store, _ := testSetup(t)
+		storagetesting.RunTestDelayedWatchDelivery(ctx, t, store)
+	})
+	t.Run("WatchError", func(t *testing.T) {
+		ctx, store, _ := testSetup(t)
+		storagetesting.RunTestWatchError(ctx, t, &storeWithPrefixTransformer{store})
+	})
+	t.Run("WatchContextCancel", func(t *testing.T) {
+		ctx, store, _ := testSetup(t)
+		storagetesting.RunTestWatchContextCancel(ctx, t, store)
+	})
+	t.Run("WatcherTimeout", func(t *testing.T) {
+		ctx, store, _ := testSetup(t)
+		storagetesting.RunTestWatcherTimeout(ctx, t, store)
+	})
+	t.Run("WatchDeleteEventObjectHaveLatestRV", func(t *testing.T) {
+		ctx, store, _ := testSetup(t)
+		storagetesting.RunTestWatchDeleteEventObjectHaveLatestRV(ctx, t, store)
+	})
+	t.Run("WatchInitializationSignal", func(t *testing.T) {
+		ctx, store, _ := testSetup(t)
+		storagetesting.RunTestWatchInitializationSignal(ctx, t, store)
+	})
+	t.Run("ProgressNotify", func(t *testing.T) {
+		clusterConfig := testserver.NewTestConfig(t)
+		clusterConfig.WatchProgressNotifyInterval = time.Second
+		ctx, store, client := testSetup(t, withClientConfig(clusterConfig))
 
-func TestClusterScopedWatch(t *testing.T) {
-	ctx, store, _ := testSetup(t)
-	storagetesting.RunTestClusterScopedWatch(ctx, t, store)
-}
+		storagetesting.RunOptionalTestProgressNotify(ctx, t, store, increaseRVFunc(client.Client))
+	})
+	t.Run("WatchWithUnsafeDelete", func(t *testing.T) {
+		featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.AllowUnsafeMalformedObjectDeletion, true)
+		ctx, store, _ := testSetup(t)
+		storagetesting.RunTestWatchWithUnsafeDelete(ctx, t, &storeWithCorruptedTransformer{store})
+	})
+	t.Run("WatchDispatchBookmarkEvents", func(t *testing.T) {
+		clusterConfig := testserver.NewTestConfig(t)
+		clusterConfig.WatchProgressNotifyInterval = time.Second
+		ctx, store, _ := testSetup(t, withClientConfig(clusterConfig))
 
-func TestNamespaceScopedWatch(t *testing.T) {
-	ctx, store, _ := testSetup(t)
-	storagetesting.RunTestNamespaceScopedWatch(ctx, t, store)
-}
-
-func TestDeleteTriggerWatch(t *testing.T) {
-	ctx, store, _ := testSetup(t)
-	storagetesting.RunTestDeleteTriggerWatch(ctx, t, store)
-}
-
-func TestWatchFromZero(t *testing.T) {
-	ctx, store, client := testSetup(t)
-	storagetesting.RunTestWatchFromZero(ctx, t, store, compactStorage(client.Client))
-}
-
-// TestWatchFromNonZero tests that
-// - watch from non-0 should just watch changes after given version
-func TestWatchFromNoneZero(t *testing.T) {
-	ctx, store, _ := testSetup(t)
-	storagetesting.RunTestWatchFromNonZero(ctx, t, store)
-}
-
-func TestDelayedWatchDelivery(t *testing.T) {
-	ctx, store, _ := testSetup(t)
-	storagetesting.RunTestDelayedWatchDelivery(ctx, t, store)
-}
-
-func TestWatchError(t *testing.T) {
-	ctx, store, _ := testSetup(t)
-	storagetesting.RunTestWatchError(ctx, t, &storeWithPrefixTransformer{store})
-}
-
-func TestWatchContextCancel(t *testing.T) {
-	ctx, store, _ := testSetup(t)
-	storagetesting.RunTestWatchContextCancel(ctx, t, store)
-}
-
-func TestWatcherTimeout(t *testing.T) {
-	ctx, store, _ := testSetup(t)
-	storagetesting.RunTestWatcherTimeout(ctx, t, store)
-}
-
-func TestWatchDeleteEventObjectHaveLatestRV(t *testing.T) {
-	ctx, store, _ := testSetup(t)
-	storagetesting.RunTestWatchDeleteEventObjectHaveLatestRV(ctx, t, store)
-}
-
-func TestWatchInitializationSignal(t *testing.T) {
-	ctx, store, _ := testSetup(t)
-	storagetesting.RunTestWatchInitializationSignal(ctx, t, store)
-}
-
-func TestProgressNotify(t *testing.T) {
-	clusterConfig := testserver.NewTestConfig(t)
-	clusterConfig.ExperimentalWatchProgressNotifyInterval = time.Second
-	ctx, store, _ := testSetup(t, withClientConfig(clusterConfig))
-
-	storagetesting.RunOptionalTestProgressNotify(ctx, t, store)
-}
-
-func TestWatchWithUnsafeDelete(t *testing.T) {
-	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.AllowUnsafeMalformedObjectDeletion, true)
-	ctx, store, _ := testSetup(t)
-	storagetesting.RunTestWatchWithUnsafeDelete(ctx, t, &storeWithCorruptedTransformer{store})
-}
-
-// TestWatchDispatchBookmarkEvents makes sure that
-// setting allowWatchBookmarks query param against
-// etcd implementation doesn't have any effect.
-func TestWatchDispatchBookmarkEvents(t *testing.T) {
-	clusterConfig := testserver.NewTestConfig(t)
-	clusterConfig.ExperimentalWatchProgressNotifyInterval = time.Second
-	ctx, store, _ := testSetup(t, withClientConfig(clusterConfig))
-
-	storagetesting.RunTestWatchDispatchBookmarkEvents(ctx, t, store, false)
-}
-
-func TestSendInitialEventsBackwardCompatibility(t *testing.T) {
-	ctx, store, _ := testSetup(t)
-	storagetesting.RunSendInitialEventsBackwardCompatibility(ctx, t, store)
-}
-
-func TestEtcdWatchSemantics(t *testing.T) {
-	ctx, store, _ := testSetup(t)
-	storagetesting.RunWatchSemantics(ctx, t, store)
-}
-
-func TestEtcdWatchSemanticsWithConcurrentDecode(t *testing.T) {
-	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.ConcurrentWatchObjectDecode, true)
-	ctx, store, _ := testSetup(t)
-	storagetesting.RunWatchSemantics(ctx, t, store)
-}
-
-func TestEtcdWatchSemanticInitialEventsExtended(t *testing.T) {
-	ctx, store, _ := testSetup(t)
-	storagetesting.RunWatchSemanticInitialEventsExtended(ctx, t, store)
-}
-
-func TestWatchListMatchSingle(t *testing.T) {
-	ctx, store, _ := testSetup(t)
-	storagetesting.RunWatchListMatchSingle(ctx, t, store)
-}
-
-func TestWatchErrorEventIsBlockingFurtherEvent(t *testing.T) {
-	ctx, store, _ := testSetup(t)
-	storagetesting.RunWatchErrorIsBlockingFurtherEvents(ctx, t, &storeWithPrefixTransformer{store})
+		storagetesting.RunTestWatchDispatchBookmarkEvents(ctx, t, store, false)
+	})
+	t.Run("SendInitialEventsBackwardCompatibility", func(t *testing.T) {
+		ctx, store, _ := testSetup(t)
+		storagetesting.RunSendInitialEventsBackwardCompatibility(ctx, t, store)
+	})
+	for _, rangeStream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("RangeStream=%v", rangeStream), func(t *testing.T) {
+			featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.EtcdRangeStream, rangeStream)
+			t.Run("WatchSemantics", func(t *testing.T) {
+				ctx, store, _ := testSetup(t)
+				storagetesting.RunWatchSemantics(ctx, t, store)
+			})
+			t.Run("WatchSemanticsWithConcurrentDecode", func(t *testing.T) {
+				featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.ConcurrentWatchObjectDecode, true)
+				ctx, store, _ := testSetup(t)
+				storagetesting.RunWatchSemantics(ctx, t, store)
+			})
+			t.Run("WatchSemanticInitialEventsExtended", func(t *testing.T) {
+				ctx, store, _ := testSetup(t)
+				storagetesting.RunWatchSemanticInitialEventsExtended(ctx, t, store)
+			})
+			t.Run("WatchListMatchSingle", func(t *testing.T) {
+				ctx, store, _ := testSetup(t)
+				storagetesting.RunWatchListMatchSingle(ctx, t, store)
+			})
+		})
+	}
+	t.Run("WatchErrorEventIsBlockingFurtherEvent", func(t *testing.T) {
+		ctx, store, _ := testSetup(t)
+		storagetesting.RunWatchErrorIsBlockingFurtherEvents(ctx, t, &storeWithPrefixTransformer{store})
+	})
 }
 
 // =======================================================================
@@ -227,7 +211,7 @@ func TestTooLargeResourceVersionErrorForWatchList(t *testing.T) {
 		t.Fatalf("Unable to convert NewTooLargeResourceVersionError to apierrors.StatusError")
 	}
 
-	w, err := store.watcher.Watch(ctx, "/abc", int64(102), requestOpts)
+	w, err := store.watcher.Watch(ctx, "/abc/", int64(102), requestOpts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,6 +238,14 @@ func TestTooLargeResourceVersionErrorForWatchList(t *testing.T) {
 }
 
 func TestWatchChanSync(t *testing.T) {
+	modes := []struct {
+		name        string
+		rangeStream bool
+	}{
+		{name: "Paginated"},
+		{name: "RangeStream", rangeStream: true},
+	}
+
 	testCases := []struct {
 		name             string
 		watchKey         string
@@ -283,61 +275,153 @@ func TestWatchChanSync(t *testing.T) {
 		},
 	}
 
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			defaultWatcherMaxLimit = testCase.watcherMaxLimit
+	for _, mode := range modes {
+		for _, testCase := range testCases {
+			t.Run(mode.name+"/"+testCase.name, func(t *testing.T) {
+				orig := defaultWatcherMaxLimit
+				defer func() { defaultWatcherMaxLimit = orig }()
+				defaultWatcherMaxLimit = testCase.watcherMaxLimit
 
-			origCtx, store, _ := testSetup(t)
-			initList, err := initStoreData(origCtx, store)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			kvWrapper := newEtcdClientKVWrapper(store.client.KV)
-			kvWrapper.getReactors = append(kvWrapper.getReactors, func() {
-				barThird := &example.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "third", Name: "bar"}}
-				podKey := fmt.Sprintf("/pods/%s/%s", barThird.Namespace, barThird.Name)
-				storedObj := &example.Pod{}
-
-				err := store.Create(context.Background(), podKey, barThird, storedObj, 0)
+				origCtx, store, _ := testSetup(t)
+				initList, err := initStoreData(origCtx, store)
 				if err != nil {
-					t.Errorf("failed to create object: %v", err)
+					t.Fatal(err)
+				}
+
+				kvWrapper := newEtcdClientKVWrapper(store.client.KV)
+				kvWrapper.getReactors = append(kvWrapper.getReactors, func() {
+					barThird := &example.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "third", Name: "bar"}}
+					podKey := fmt.Sprintf("/pods/%s/%s", barThird.Namespace, barThird.Name)
+					storedObj := &example.Pod{}
+
+					err := store.Create(context.Background(), podKey, barThird, storedObj, 0)
+					if err != nil {
+						t.Errorf("failed to create object: %v", err)
+					}
+				})
+
+				store.client.KV = kvWrapper
+
+				w := store.watcher.createWatchChan(
+					origCtx,
+					testCase.watchKey,
+					0,
+					true,
+					false,
+					storage.Everything)
+
+				sync := w.syncPaginated
+				if mode.rangeStream {
+					sync = w.syncStreamRecursive
+				}
+				if err := sync(); err != nil {
+					t.Fatal(err)
+				}
+
+				if w.initialRev <= 0 {
+					t.Errorf("expected initialRev to be set, got %d", w.initialRev)
+				}
+
+				// close incomingEventChan so we can read incomingEventChan non-blocking
+				close(w.incomingEventChan)
+
+				eventsReceived := 0
+				for event := range w.incomingEventChan {
+					eventsReceived++
+					storagetesting.ExpectContains(t, "incorrect list pods", initList, event.key)
+				}
+
+				if eventsReceived != testCase.expectEventCount {
+					t.Errorf("Unexpected number of events: %v, expected: %v", eventsReceived, testCase.expectEventCount)
+				}
+
+				if mode.rangeStream {
+					if kvWrapper.getStreamCallCounter != 1 {
+						t.Errorf("Unexpected called times of client.KV.GetStream() : %v, expected: 1", kvWrapper.getStreamCallCounter)
+					}
+				} else if kvWrapper.getCallCounter != testCase.expectGetCount {
+					t.Errorf("Unexpected called times of client.KV.Get() : %v, expected: %v", kvWrapper.getCallCounter, testCase.expectGetCount)
 				}
 			})
-
-			store.client.KV = kvWrapper
-
-			w := store.watcher.createWatchChan(
-				origCtx,
-				testCase.watchKey,
-				0,
-				true,
-				false,
-				storage.Everything)
-
-			err = w.sync()
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			// close incomingEventChan so we can read incomingEventChan non-blocking
-			close(w.incomingEventChan)
-
-			eventsReceived := 0
-			for event := range w.incomingEventChan {
-				eventsReceived++
-				storagetesting.ExpectContains(t, "incorrect list pods", initList, event.key)
-			}
-
-			if eventsReceived != testCase.expectEventCount {
-				t.Errorf("Unexpected number of events: %v, expected: %v", eventsReceived, testCase.expectEventCount)
-			}
-
-			if kvWrapper.getCallCounter != testCase.expectGetCount {
-				t.Errorf("Unexpected called times of client.KV.Get() : %v, expected: %v", kvWrapper.getCallCounter, testCase.expectGetCount)
-			}
-		})
+		}
 	}
+}
+
+// TestWatchChanSyncStreamMatchesPaginated verifies syncStreamRecursive queues the same
+// key/value/revision set as syncPaginated for the same etcd state.
+func TestWatchChanSyncStreamMatchesPaginated(t *testing.T) {
+	origCtx, store, _ := testSetup(t)
+
+	want := map[string]struct{}{}
+	for i := range 20 {
+		pod := &example.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: fmt.Sprintf("ns-%d", i%3), Name: fmt.Sprintf("pod-%d", i)}}
+		key := fmt.Sprintf("/pods/%s/%s", pod.Namespace, pod.Name)
+		if err := store.Create(origCtx, key, pod, &example.Pod{}, 0); err != nil {
+			t.Fatalf("failed to create object: %v", err)
+		}
+		want[key] = struct{}{}
+	}
+
+	stream := drainSync(t, store, origCtx, func(wc *watchChan) error { return wc.syncStreamRecursive() })
+	paginated := drainSync(t, store, origCtx, func(wc *watchChan) error { return wc.syncPaginated() })
+
+	if len(stream) != len(want) {
+		t.Errorf("syncStreamRecursive queued %d events, expected %d", len(stream), len(want))
+	}
+	if diff := cmp.Diff(paginated, stream, cmp.AllowUnexported(event{})); diff != "" {
+		t.Errorf("syncStreamRecursive and syncPaginated queued different events (-paginated +stream):\n%s", diff)
+	}
+}
+
+func TestWatchChanSyncStreamFallsBackToPaginated(t *testing.T) {
+	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.EtcdRangeStream, true)
+
+	origCtx, store, _ := testSetup(t)
+	initList, err := initStoreData(origCtx, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	kvWrapper := newEtcdClientKVWrapper(store.client.KV)
+	kvWrapper.streamUnimplemented = true
+	store.client.KV = kvWrapper
+
+	w := store.watcher.createWatchChan(origCtx, "/pods/", 0, true, false, storage.Everything)
+
+	if err := w.sync(); err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+
+	if kvWrapper.getStreamCallCounter != 1 {
+		t.Errorf("expected GetStream to be called once, got %d", kvWrapper.getStreamCallCounter)
+	}
+	if w.initialRev <= 0 {
+		t.Errorf("expected initialRev to be set by the paginated fallback, got %d", w.initialRev)
+	}
+
+	close(w.incomingEventChan)
+	eventsReceived := 0
+	for event := range w.incomingEventChan {
+		eventsReceived++
+		storagetesting.ExpectContains(t, "incorrect list pods", initList, event.key)
+	}
+	if eventsReceived != len(initList) {
+		t.Errorf("Unexpected number of events: %v, expected: %v", eventsReceived, len(initList))
+	}
+}
+
+func drainSync(t *testing.T, store *store, ctx context.Context, sync func(*watchChan) error) map[string]*event {
+	t.Helper()
+	wc := store.watcher.createWatchChan(ctx, "/pods/", 0, true, false, storage.Everything)
+	if err := sync(wc); err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+	close(wc.incomingEventChan)
+	out := map[string]*event{}
+	for e := range wc.incomingEventChan {
+		out[e.key] = e
+	}
+	return out
 }
 
 // NOTE: it's not thread-safe
@@ -345,6 +429,10 @@ type etcdClientKVWrapper struct {
 	clientv3.KV
 	// keeps track of the number of times Get method is called
 	getCallCounter int
+	// keeps track of the number of times GetStream method is called
+	getStreamCallCounter int
+	// when true, GetStream returns a gRPC Unimplemented error
+	streamUnimplemented bool
 	// getReactors is called after the etcd KV's get function is executed.
 	getReactors []func()
 }
@@ -354,6 +442,14 @@ func newEtcdClientKVWrapper(kv clientv3.KV) *etcdClientKVWrapper {
 		KV:             kv,
 		getCallCounter: 0,
 	}
+}
+
+func (ecw *etcdClientKVWrapper) GetStream(ctx context.Context, key string, opts ...clientv3.OpOption) (clientv3.GetStreamChan, error) {
+	ecw.getStreamCallCounter++
+	if ecw.streamUnimplemented {
+		return nil, grpcstatus.Error(grpccodes.Unimplemented, "RangeStream is unimplemented")
+	}
+	return ecw.KV.GetStream(ctx, key, opts...)
 }
 
 func (ecw *etcdClientKVWrapper) Get(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.GetResponse, error) {

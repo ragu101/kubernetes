@@ -643,6 +643,7 @@ func autoConvert_v1beta1_Issuer_To_apiserver_Issuer(in *Issuer, out *apiserver.I
 	out.CertificateAuthority = in.CertificateAuthority
 	out.Audiences = *(*[]string)(unsafe.Pointer(&in.Audiences))
 	out.AudienceMatchPolicy = apiserver.AudienceMatchPolicyType(in.AudienceMatchPolicy)
+	out.EgressSelectorType = apiserver.EgressSelectorType(in.EgressSelectorType)
 	return nil
 }
 
@@ -659,6 +660,7 @@ func autoConvert_apiserver_Issuer_To_v1beta1_Issuer(in *apiserver.Issuer, out *I
 	out.CertificateAuthority = in.CertificateAuthority
 	out.Audiences = *(*[]string)(unsafe.Pointer(&in.Audiences))
 	out.AudienceMatchPolicy = AudienceMatchPolicyType(in.AudienceMatchPolicy)
+	out.EgressSelectorType = EgressSelectorType(in.EgressSelectorType)
 	return nil
 }
 
@@ -751,6 +753,7 @@ func autoConvert_v1beta1_TLSConfig_To_apiserver_TLSConfig(in *TLSConfig, out *ap
 	out.CABundle = in.CABundle
 	out.ClientKey = in.ClientKey
 	out.ClientCert = in.ClientCert
+	out.TLSServerName = in.TLSServerName
 	return nil
 }
 
@@ -763,6 +766,7 @@ func autoConvert_apiserver_TLSConfig_To_v1beta1_TLSConfig(in *apiserver.TLSConfi
 	out.CABundle = in.CABundle
 	out.ClientKey = in.ClientKey
 	out.ClientCert = in.ClientCert
+	out.TLSServerName = in.TLSServerName
 	return nil
 }
 

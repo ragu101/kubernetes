@@ -45,20 +45,27 @@ import (
 func TestCreateServiceSingleStackIPv4(t *testing.T) {
 	for _, enableMultiServiceCIDR := range []bool{false, true} {
 		for _, disableAllocatorDualWrite := range []bool{false, true} {
+			if !enableMultiServiceCIDR && disableAllocatorDualWrite {
+				// Inavlid configuration: DisableAllocatorDualWrite depends on MultiServiceCIDR
+				continue
+			}
 			t.Run(fmt.Sprintf("MultiServiceCIDR=%v DisableAllocatorDualWrite=%v", enableMultiServiceCIDR, disableAllocatorDualWrite), func(t *testing.T) {
 				// Create an IPv4 single stack control-plane
 				tCtx := ktesting.Init(t)
 				etcdOptions := framework.SharedEtcd()
 				apiServerOptions := kubeapiservertesting.NewDefaultTestServerOptions()
+				flags := []string{
+					"--service-cluster-ip-range=10.0.0.0/16",
+					"--advertise-address=10.1.1.1",
+					"--disable-admission-plugins=ServiceAccount",
+					fmt.Sprintf("--feature-gates=%s=%v,%s=%v", features.MultiCIDRServiceAllocator, enableMultiServiceCIDR, features.DisableAllocatorDualWrite, disableAllocatorDualWrite),
+				}
+				if !enableMultiServiceCIDR || !disableAllocatorDualWrite {
+					flags = append(flags, "--emulated-version=1.33")
+				}
 				s := kubeapiservertesting.StartTestServerOrDie(t,
 					apiServerOptions,
-					[]string{
-						fmt.Sprintf("--runtime-config=networking.k8s.io/v1beta1=%v", enableMultiServiceCIDR),
-						"--service-cluster-ip-range=10.0.0.0/16",
-						"--advertise-address=10.1.1.1",
-						"--disable-admission-plugins=ServiceAccount",
-						fmt.Sprintf("--feature-gates=%s=%v,%s=%v", features.MultiCIDRServiceAllocator, enableMultiServiceCIDR, features.DisableAllocatorDualWrite, disableAllocatorDualWrite),
-					},
+					flags,
 					etcdOptions)
 				defer s.TearDownFn()
 
@@ -233,7 +240,6 @@ func TestCreateServiceSingleStackIPv4(t *testing.T) {
 				}
 
 				for i, tc := range testcases {
-					tc := tc
 					t.Run(tc.name, func(t *testing.T) {
 
 						svc := &v1.Service{
@@ -289,20 +295,27 @@ func TestCreateServiceSingleStackIPv4(t *testing.T) {
 func TestCreateServiceSingleStackIPv6(t *testing.T) {
 	for _, enableMultiServiceCIDR := range []bool{false, true} {
 		for _, disableAllocatorDualWrite := range []bool{false, true} {
+			if !enableMultiServiceCIDR && disableAllocatorDualWrite {
+				// Inavlid configuration: DisableAllocatorDualWrite depends on MultiServiceCIDR
+				continue
+			}
 			t.Run(fmt.Sprintf("MultiServiceCIDR=%v DisableAllocatorDualWrite=%v", enableMultiServiceCIDR, disableAllocatorDualWrite), func(t *testing.T) {
 				// Create an IPv6 only control-plane
 				tCtx := ktesting.Init(t)
 				etcdOptions := framework.SharedEtcd()
 				apiServerOptions := kubeapiservertesting.NewDefaultTestServerOptions()
+				flags := []string{
+					"--service-cluster-ip-range=2001:db8:1::/108",
+					"--advertise-address=2001:db8::10",
+					"--disable-admission-plugins=ServiceAccount",
+					fmt.Sprintf("--feature-gates=%s=%v,%s=%v", features.MultiCIDRServiceAllocator, enableMultiServiceCIDR, features.DisableAllocatorDualWrite, disableAllocatorDualWrite),
+				}
+				if !enableMultiServiceCIDR || !disableAllocatorDualWrite {
+					flags = append(flags, "--emulated-version=1.33")
+				}
 				s := kubeapiservertesting.StartTestServerOrDie(t,
 					apiServerOptions,
-					[]string{
-						fmt.Sprintf("--runtime-config=networking.k8s.io/v1beta1=%v", enableMultiServiceCIDR),
-						"--service-cluster-ip-range=2001:db8:1::/108",
-						"--advertise-address=2001:db8::10",
-						"--disable-admission-plugins=ServiceAccount",
-						fmt.Sprintf("--feature-gates=%s=%v,%s=%v", features.MultiCIDRServiceAllocator, enableMultiServiceCIDR, features.DisableAllocatorDualWrite, disableAllocatorDualWrite),
-					},
+					flags,
 					etcdOptions)
 				defer s.TearDownFn()
 
@@ -469,7 +482,6 @@ func TestCreateServiceSingleStackIPv6(t *testing.T) {
 				}
 
 				for i, tc := range testcases {
-					tc := tc
 					t.Run(tc.name, func(t *testing.T) {
 
 						svc := &v1.Service{
@@ -520,20 +532,27 @@ func TestCreateServiceSingleStackIPv6(t *testing.T) {
 func TestCreateServiceDualStackIPv4IPv6(t *testing.T) {
 	for _, enableMultiServiceCIDR := range []bool{false, true} {
 		for _, disableAllocatorDualWrite := range []bool{false, true} {
+			if !enableMultiServiceCIDR && disableAllocatorDualWrite {
+				// Inavlid configuration: DisableAllocatorDualWrite depends on MultiServiceCIDR
+				continue
+			}
 			t.Run(fmt.Sprintf("MultiServiceCIDR=%v DisableAllocatorDualWrite=%v", enableMultiServiceCIDR, disableAllocatorDualWrite), func(t *testing.T) {
 				// Create an IPv4IPv6 dual stack control-plane
 				tCtx := ktesting.Init(t)
 				etcdOptions := framework.SharedEtcd()
 				apiServerOptions := kubeapiservertesting.NewDefaultTestServerOptions()
+				flags := []string{
+					"--service-cluster-ip-range=10.0.0.0/16,2001:db8:1::/108",
+					"--advertise-address=10.0.0.1",
+					"--disable-admission-plugins=ServiceAccount",
+					fmt.Sprintf("--feature-gates=%s=%v,%s=%v", features.MultiCIDRServiceAllocator, enableMultiServiceCIDR, features.DisableAllocatorDualWrite, disableAllocatorDualWrite),
+				}
+				if !enableMultiServiceCIDR || !disableAllocatorDualWrite {
+					flags = append(flags, "--emulated-version=1.33")
+				}
 				s := kubeapiservertesting.StartTestServerOrDie(t,
 					apiServerOptions,
-					[]string{
-						fmt.Sprintf("--runtime-config=networking.k8s.io/v1beta1=%v", enableMultiServiceCIDR),
-						"--service-cluster-ip-range=10.0.0.0/16,2001:db8:1::/108",
-						"--advertise-address=10.0.0.1",
-						"--disable-admission-plugins=ServiceAccount",
-						fmt.Sprintf("--feature-gates=%s=%v,%s=%v", features.MultiCIDRServiceAllocator, enableMultiServiceCIDR, features.DisableAllocatorDualWrite, disableAllocatorDualWrite),
-					},
+					flags,
 					etcdOptions)
 				defer s.TearDownFn()
 
@@ -742,7 +761,6 @@ func TestCreateServiceDualStackIPv4IPv6(t *testing.T) {
 				}
 
 				for i, tc := range testcases {
-					tc := tc
 					t.Run(tc.name, func(t *testing.T) {
 
 						svc := &v1.Service{
@@ -799,20 +817,27 @@ func TestCreateServiceDualStackIPv4IPv6(t *testing.T) {
 func TestCreateServiceDualStackIPv6IPv4(t *testing.T) {
 	for _, enableMultiServiceCIDR := range []bool{false, true} {
 		for _, disableAllocatorDualWrite := range []bool{false, true} {
+			if !enableMultiServiceCIDR && disableAllocatorDualWrite {
+				// Inavlid configuration: DisableAllocatorDualWrite depends on MultiServiceCIDR
+				continue
+			}
 			t.Run(fmt.Sprintf("MultiServiceCIDR=%v DisableAllocatorDualWrite=%v", enableMultiServiceCIDR, disableAllocatorDualWrite), func(t *testing.T) {
 				// Create an IPv6IPv4 dual stack control-plane
 				tCtx := ktesting.Init(t)
 				etcdOptions := framework.SharedEtcd()
 				apiServerOptions := kubeapiservertesting.NewDefaultTestServerOptions()
+				flags := []string{
+					"--service-cluster-ip-range=2001:db8:1::/108,10.0.0.0/16",
+					"--advertise-address=2001:db8::10",
+					"--disable-admission-plugins=ServiceAccount",
+					fmt.Sprintf("--feature-gates=%s=%v,%s=%v", features.MultiCIDRServiceAllocator, enableMultiServiceCIDR, features.DisableAllocatorDualWrite, disableAllocatorDualWrite),
+				}
+				if !enableMultiServiceCIDR || !disableAllocatorDualWrite {
+					flags = append(flags, "--emulated-version=1.33")
+				}
 				s := kubeapiservertesting.StartTestServerOrDie(t,
 					apiServerOptions,
-					[]string{
-						fmt.Sprintf("--runtime-config=networking.k8s.io/v1beta1=%v", enableMultiServiceCIDR),
-						"--service-cluster-ip-range=2001:db8:1::/108,10.0.0.0/16",
-						"--advertise-address=2001:db8::10",
-						"--disable-admission-plugins=ServiceAccount",
-						fmt.Sprintf("--feature-gates=%s=%v,%s=%v", features.MultiCIDRServiceAllocator, enableMultiServiceCIDR, features.DisableAllocatorDualWrite, disableAllocatorDualWrite),
-					},
+					flags,
 					etcdOptions)
 				defer s.TearDownFn()
 
@@ -983,7 +1008,6 @@ func TestCreateServiceDualStackIPv6IPv4(t *testing.T) {
 				}
 
 				for i, tc := range testcases {
-					tc := tc
 					t.Run(tc.name, func(t *testing.T) {
 
 						svc := &v1.Service{

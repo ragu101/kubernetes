@@ -18,6 +18,7 @@ package upgrade
 
 import (
 	"bytes"
+	_ "embed"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,26 +33,8 @@ import (
 	"k8s.io/kubernetes/cmd/kubeadm/app/util/output"
 )
 
-const testConfigToken = `apiVersion: v1
-clusters:
-- cluster:
-    certificate-authority-data:
-    server: localhost:8000
-  name: prod
-contexts:
-- context:
-    cluster: prod
-    namespace: default
-    user: default-service-account
-  name: default
-current-context: default
-kind: Config
-preferences: {}
-users:
-- name: kubernetes-admin
-  user:
-    client-certificate-data:
-`
+//go:embed testdata/config-token.yaml
+var testConfigToken string
 
 func TestEnforceRequirements(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -77,8 +60,8 @@ func TestEnforceRequirements(t *testing.T) {
 			flags: applyPlanFlags{
 				kubeConfigPath: fullPath,
 			},
-			expectedErr:        "ERROR CoreDNSUnsupportedPlugins",
-			expectedErrNonRoot: "user is not running as", // user is not running as (root || administrator)
+			expectedErr:        "preflight checks failed",
+			expectedErrNonRoot: "preflight checks failed",
 		},
 		{
 			name: "Bogus preflight check specify all with individual check",

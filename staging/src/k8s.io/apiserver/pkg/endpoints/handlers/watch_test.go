@@ -17,6 +17,7 @@ limitations under the License.
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -24,20 +25,26 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/apitesting"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/apiserver/pkg/endpoints/handlers/responsewriters"
-	apitesting "k8s.io/apiserver/pkg/endpoints/testing"
+	"k8s.io/apiserver/pkg/endpoints/metrics"
+	endpointstesting "k8s.io/apiserver/pkg/endpoints/testing"
 	"k8s.io/client-go/dynamic"
 	restclient "k8s.io/client-go/rest"
+	"k8s.io/component-base/metrics/legacyregistry"
+	metricstestutil "k8s.io/component-base/metrics/testutil"
 )
 
 // Fake API versions, similar to api/latest.go
@@ -50,8 +57,8 @@ var testCodecV2 = codecs.LegacyCodec(testGroupV2)
 
 func addTestTypesV2() {
 	scheme.AddKnownTypes(testGroupV2,
-		&apitesting.Simple{},
-		&apitesting.SimpleList{},
+		&endpointstesting.Simple{},
+		&endpointstesting.SimpleList{},
 	)
 	metav1.AddToGroupVersion(scheme, testGroupV2)
 }
@@ -61,6 +68,7 @@ func init() {
 }
 
 func TestWatchHTTPErrors(t *testing.T) {
+	ctx := t.Context()
 	watcher := watch.NewFake()
 	timeoutCh := make(chan time.Time)
 	doneCh := make(chan struct{})
@@ -92,11 +100,14 @@ func TestWatchHTTPErrors(t *testing.T) {
 	dest.Path = "/" + namedGroupPrefix + "/" + testGroupV2.Group + "/" + testGroupV2.Version + "/simple"
 	dest.RawQuery = "watch=true"
 
-	req, _ := http.NewRequest(http.MethodGet, dest.String(), nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, dest.String(), nil)
 	client := http.Client{}
 	resp, err := client.Do(req)
 	require.NoError(t, err)
-	errStatus := errors.NewInternalError(fmt.Errorf("we got an error")).Status()
+	defer apitesting.Close(t, resp.Body)
+
+	// Send error to server from storage
+	errStatus := apierrors.NewInternalError(fmt.Errorf("we got an error")).Status()
 	watcher.Error(&errStatus)
 	watcher.Stop()
 
@@ -124,6 +135,7 @@ func TestWatchHTTPErrors(t *testing.T) {
 }
 
 func TestWatchHTTPErrorsBeforeServe(t *testing.T) {
+	ctx := t.Context()
 	watcher := watch.NewFake()
 	timeoutCh := make(chan time.Time)
 	doneCh := make(chan struct{})
@@ -150,7 +162,7 @@ func TestWatchHTTPErrorsBeforeServe(t *testing.T) {
 		TimeoutFactory: &fakeTimeoutFactory{timeoutCh, doneCh},
 	}
 
-	statusErr := errors.NewInternalError(fmt.Errorf("we got an error"))
+	statusErr := apierrors.NewInternalError(fmt.Errorf("we got an error"))
 	errStatus := statusErr.Status()
 
 	s := httptest.NewServer(serveWatch(watcher, watchServer, statusErr))
@@ -161,10 +173,11 @@ func TestWatchHTTPErrorsBeforeServe(t *testing.T) {
 	dest.Path = "/" + namedGroupPrefix + "/" + testGroupV2.Group + "/" + testGroupV2.Version + "/simple"
 	dest.RawQuery = "watch=true"
 
-	req, _ := http.NewRequest(http.MethodGet, dest.String(), nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, dest.String(), nil)
 	client := http.Client{}
 	resp, err := client.Do(req)
 	require.NoError(t, err)
+	defer apitesting.Close(t, resp.Body)
 
 	// We had already got an error before watch serve started
 	decoder := json.NewDecoder(resp.Body)
@@ -227,6 +240,7 @@ func TestWatchHTTPDynamicClientErrors(t *testing.T) {
 }
 
 func TestWatchHTTPTimeout(t *testing.T) {
+	ctx := t.Context()
 	watcher := watch.NewFake()
 	timeoutCh := make(chan time.Time)
 	done := make(chan struct{})
@@ -258,11 +272,14 @@ func TestWatchHTTPTimeout(t *testing.T) {
 	dest.Path = "/" + namedGroupPrefix + "/" + testGroupV2.Group + "/" + testGroupV2.Version + "/simple"
 	dest.RawQuery = "watch=true"
 
-	req, _ := http.NewRequest(http.MethodGet, dest.String(), nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, dest.String(), nil)
 	client := http.Client{}
 	resp, err := client.Do(req)
 	require.NoError(t, err)
-	watcher.Add(&apitesting.Simple{TypeMeta: metav1.TypeMeta{APIVersion: testGroupV2.String()}})
+	defer apitesting.Close(t, resp.Body)
+
+	// Send object added event to server from storage
+	watcher.Add(&endpointstesting.Simple{TypeMeta: metav1.TypeMeta{APIVersion: testGroupV2.String()}})
 
 	// Make sure we can actually watch an endpoint
 	decoder := json.NewDecoder(resp.Body)
@@ -328,5 +345,145 @@ func serveWatch(watcher watch.Interface, watchServer *WatchServer, preServeErr e
 		}
 
 		watchServer.HandleHTTP(w, req)
+	}
+}
+
+type fakeCachingObject struct {
+	obj runtime.Object
+
+	once sync.Once
+	raw  []byte
+	err  error
+}
+
+func (f *fakeCachingObject) CacheEncode(_ runtime.Identifier, encode func(runtime.Object, io.Writer) error, w io.Writer) error {
+	f.once.Do(func() {
+		buffer := bytes.NewBuffer(nil)
+		f.err = encode(f.obj, buffer)
+		f.raw = buffer.Bytes()
+	})
+
+	if f.err != nil {
+		return f.err
+	}
+
+	_, err := w.Write(f.raw)
+	return err
+}
+
+func (f *fakeCachingObject) GetObject() runtime.Object {
+	return f.obj
+}
+
+func (f *fakeCachingObject) GetObjectKind() schema.ObjectKind {
+	return f.obj.GetObjectKind()
+}
+
+func (f *fakeCachingObject) DeepCopyObject() runtime.Object {
+	return &fakeCachingObject{obj: f.obj.DeepCopyObject()}
+}
+
+var _ runtime.CacheableObject = &fakeCachingObject{}
+var _ runtime.Object = &fakeCachingObject{}
+
+func TestWatchEventSizes(t *testing.T) {
+	metrics.Register()
+	gvr := schema.GroupVersionResource{Group: "group", Version: "version", Resource: "resource"}
+	testCases := []struct {
+		name     string
+		event    watch.Event
+		wantSize int64
+	}{
+		{
+			name: "regular object",
+			event: watch.Event{
+				Type:   watch.Added,
+				Object: &endpointstesting.Simple{ObjectMeta: metav1.ObjectMeta{Name: "foo"}},
+			},
+			wantSize: 2 * 98,
+		},
+		{
+			name: "cached object",
+			event: watch.Event{
+				Type: watch.Added,
+				Object: &fakeCachingObject{obj: &runtime.Unknown{
+					Raw:         []byte(`{"kind":"Simple","apiVersion":"v1","metadata":{"name":"foo"}}`),
+					ContentType: runtime.ContentTypeJSON,
+				}},
+			},
+			wantSize: 2 * 88,
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+
+			metrics.WatchEventsSizes.Reset()
+			metrics.WatchEvents.Reset()
+
+			watcher := watch.NewFake()
+			timeoutCh := make(chan time.Time)
+			doneCh := make(chan struct{})
+
+			info, ok := runtime.SerializerInfoForMediaType(codecs.SupportedMediaTypes(), runtime.ContentTypeJSON)
+			require.True(t, ok)
+			require.NotNil(t, info.StreamSerializer)
+			serializer := info.StreamSerializer
+
+			watchServer := &WatchServer{
+				Scope: &RequestScope{
+					Resource: gvr,
+				},
+				Watching:        watcher,
+				MediaType:       "application/json",
+				Framer:          serializer.Framer,
+				Encoder:         testCodecV2,
+				EmbeddedEncoder: testCodecV2,
+				TimeoutFactory:  &fakeTimeoutFactory{timeoutCh: timeoutCh, done: doneCh},
+			}
+
+			s := httptest.NewServer(serveWatch(watcher, watchServer, nil))
+			defer s.Close()
+
+			// Setup a client
+			dest, _ := url.Parse(s.URL)
+			dest.Path = "/" + namedGroupPrefix + "/" + testGroupV2.Group + "/" + testGroupV2.Version + "/simple"
+			dest.RawQuery = "watch=true"
+
+			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, dest.String(), nil)
+			client := http.Client{}
+			resp, err := client.Do(req)
+			require.NoError(t, err)
+			defer apitesting.Close(t, resp.Body)
+
+			// Send object twice so that in case of caching the cached version is used.
+			watcher.Action(tc.event.Type, tc.event.Object)
+			watcher.Action(tc.event.Type, tc.event.Object)
+
+			close(timeoutCh)
+			<-doneCh
+
+			expected := fmt.Sprintf(`# HELP apiserver_watch_events_sizes [BETA] Watch event size distribution in bytes
+# TYPE apiserver_watch_events_sizes histogram
+apiserver_watch_events_sizes_bucket{group="group",resource="resource",version="version",le="1024"} 2
+apiserver_watch_events_sizes_bucket{group="group",resource="resource",version="version",le="2048"} 2
+apiserver_watch_events_sizes_bucket{group="group",resource="resource",version="version",le="4096"} 2
+apiserver_watch_events_sizes_bucket{group="group",resource="resource",version="version",le="8192"} 2
+apiserver_watch_events_sizes_bucket{group="group",resource="resource",version="version",le="16384"} 2
+apiserver_watch_events_sizes_bucket{group="group",resource="resource",version="version",le="32768"} 2
+apiserver_watch_events_sizes_bucket{group="group",resource="resource",version="version",le="65536"} 2
+apiserver_watch_events_sizes_bucket{group="group",resource="resource",version="version",le="131072"} 2
+apiserver_watch_events_sizes_bucket{group="group",resource="resource",version="version",le="+Inf"} 2
+apiserver_watch_events_sizes_sum{group="group",resource="resource",version="version"} %d
+apiserver_watch_events_sizes_count{group="group",resource="resource",version="version"} 2
+
+# HELP apiserver_watch_events_total [BETA] Number of events sent in watch clients
+# TYPE apiserver_watch_events_total counter
+apiserver_watch_events_total{group="group",resource="resource",version="version"} 2
+`, tc.wantSize)
+
+			err = metricstestutil.GatherAndCompare(legacyregistry.DefaultGatherer, strings.NewReader(expected), "apiserver_watch_events_sizes", "apiserver_watch_events_total")
+			require.NoError(t, err)
+		})
 	}
 }

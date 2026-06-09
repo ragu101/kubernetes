@@ -146,6 +146,10 @@ type TLSConfig struct {
 	// Must be configured if TCPTransport.URL is prefixed with https://
 	// +optional
 	ClientCert string
+
+	// tlsServerName is used to check server certificate. If tlsServerName is empty, the hostname used to contact the server is used.
+	// +optional
+	TLSServerName string
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -234,6 +238,7 @@ type Issuer struct {
 	CertificateAuthority string
 	Audiences            []string
 	AudienceMatchPolicy  AudienceMatchPolicyType
+	EgressSelectorType   EgressSelectorType
 }
 
 // AudienceMatchPolicyType is a set of valid values for Issuer.AudienceMatchPolicy
@@ -242,6 +247,14 @@ type AudienceMatchPolicyType string
 // Valid types for AudienceMatchPolicyType
 const (
 	AudienceMatchPolicyMatchAny AudienceMatchPolicyType = "MatchAny"
+)
+
+type EgressSelectorType string
+
+const (
+	EgressSelectorControlPlane EgressSelectorType = "controlplane"
+
+	EgressSelectorCluster EgressSelectorType = "cluster"
 )
 
 // ClaimValidationRule provides the configuration for a single claim validation rule.

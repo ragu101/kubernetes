@@ -292,14 +292,36 @@ func TestRequestError(t *testing.T) {
 }
 
 func TestRequestURI(t *testing.T) {
-	r := (&Request{}).Param("foo", "a")
+	r := (&Request{c: &RESTClient{base: &url.URL{Path: "/"}}}).Param("foo", "a").Param("bar", "b")
 	r.Prefix("other")
 	r.RequestURI("/test?foo=b&a=b&c=1&c=2")
 	if r.pathPrefix != "/test" {
 		t.Errorf("path is wrong: %#v", r)
 	}
 	if !reflect.DeepEqual(r.params, url.Values{"a": []string{"b"}, "foo": []string{"b"}, "c": []string{"1", "2"}}) {
-		t.Errorf("should have set a param: %#v", r)
+		t.Errorf("should have set a param, got: %#v", r.params)
+	}
+}
+
+func TestRequestURIContext(t *testing.T) {
+	r := (&Request{c: &RESTClient{base: &url.URL{Path: "/context"}}}).Param("foo", "a").Param("bar", "b")
+	r.Prefix("other")
+	r.RequestURI("/test?foo=b&a=b&c=1&c=2")
+	if r.pathPrefix != "/context/test" {
+		t.Errorf("path is wrong: %#v", r)
+	}
+	if !reflect.DeepEqual(r.params, url.Values{"a": []string{"b"}, "foo": []string{"b"}, "c": []string{"1", "2"}}) {
+		t.Errorf("should have set a param, got: %#v", r.params)
+	}
+
+	r = (&Request{c: &RESTClient{base: &url.URL{Path: "/context"}}}).Param("foo", "a").Param("bar", "b")
+	r.Prefix("other")
+	r.RequestURI("../test?foo=b&a=b&c=1&c=2")
+	if r.pathPrefix != "/test" {
+		t.Errorf("path is wrong: %#v", r)
+	}
+	if !reflect.DeepEqual(r.params, url.Values{"a": []string{"b"}, "foo": []string{"b"}, "c": []string{"1", "2"}}) {
+		t.Errorf("should have set a param, got: %#v", r.params)
 	}
 }
 
@@ -4252,4 +4274,17 @@ func TestRequestWarningHandler(t *testing.T) {
 		assert.Equal(t, request, request.WarningHandlerWithContext(nil))
 		assert.Nil(t, request.warningHandler)
 	})
+}
+
+func TestTryThrottleWithInfoContextDeadline(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	r := &Request{
+		rateLimiter: flowcontrol.NewTokenBucketRateLimiter(1, 1),
+		c:           &RESTClient{base: &url.URL{Path: "/"}},
+	}
+	err := r.tryThrottleWithInfo(ctx, "")
+	require.ErrorIs(t, err, context.Canceled)
+	assert.NotContains(t, err.Error(), "client rate limiter")
 }

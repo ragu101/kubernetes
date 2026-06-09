@@ -39,17 +39,17 @@ import (
 	"k8s.io/kubernetes/pkg/apis/apps"
 	appsvalidation "k8s.io/kubernetes/pkg/apis/apps/validation"
 	"k8s.io/kubernetes/pkg/features"
-	"sigs.k8s.io/structured-merge-diff/v4/fieldpath"
+	"sigs.k8s.io/structured-merge-diff/v6/fieldpath"
 )
 
 // rsStrategy implements verification logic for ReplicaSets.
 type rsStrategy struct {
-	runtime.ObjectTyper
+	rest.DeclarativeValidation
 	names.NameGenerator
 }
 
 // Strategy is the default logic that applies when creating and updating ReplicaSet objects.
-var Strategy = rsStrategy{legacyscheme.Scheme, names.SimpleNameGenerator}
+var Strategy = rsStrategy{rest.DeclarativeValidation{Scheme: legacyscheme.Scheme}, names.SimpleNameGenerator}
 
 // Make sure we correctly implement the interface.
 var _ = rest.GarbageCollectionDeleteStrategy(Strategy)
@@ -132,7 +132,7 @@ func (rsStrategy) Canonicalize(obj runtime.Object) {
 
 // AllowCreateOnUpdate is false for ReplicaSets; this means a POST is
 // needed to create one.
-func (rsStrategy) AllowCreateOnUpdate() bool {
+func (rsStrategy) AllowCreateOnUpdate(ctx context.Context) bool {
 	return false
 }
 
@@ -142,10 +142,7 @@ func (rsStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Object) f
 	oldReplicaSet := old.(*apps.ReplicaSet)
 
 	opts := pod.GetValidationOptionsFromPodTemplate(&newReplicaSet.Spec.Template, &oldReplicaSet.Spec.Template)
-	allErrs := appsvalidation.ValidateReplicaSet(obj.(*apps.ReplicaSet), opts)
-	allErrs = append(allErrs, appsvalidation.ValidateReplicaSetUpdate(newReplicaSet, oldReplicaSet, opts)...)
-
-	return allErrs
+	return appsvalidation.ValidateReplicaSetUpdate(newReplicaSet, oldReplicaSet, opts)
 }
 
 // WarningsOnUpdate returns warnings for the given update.
@@ -159,7 +156,7 @@ func (rsStrategy) WarningsOnUpdate(ctx context.Context, obj, old runtime.Object)
 	return warnings
 }
 
-func (rsStrategy) AllowUnconditionalUpdate() bool {
+func (rsStrategy) AllowUnconditionalUpdate(ctx context.Context) bool {
 	return true
 }
 
